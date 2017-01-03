@@ -760,10 +760,19 @@ class ModelSerializer(Serializer):
         else:
             # Reverse relationships are only included if they are explicitly
             # present in the `fields` option on the serializer
-            reverse_rels = opts.get_all_related_objects()
-            reverse_rels += opts.get_all_related_many_to_many_objects()
+            reverse_rels = [
+                f for f in cls._meta.get_fields()
+                if (f.one_to_many or f.one_to_one)
+                and f.auto_created and not f.concrete
+            ]
+            reverse_rels += [
+                (f, f.model if f.model != cls else None)
+                for f in cls._meta.get_fields()
+                if (f.one_to_many or f.one_to_one)
+                and f.auto_created and not f.concrete
+                ]
 
-        for relation in reverse_rels:
+        for relation in filter(lambda x: not isinstance(x, tuple), reverse_rels):
             accessor_name = relation.get_accessor_name()
             if not self.opts.fields or accessor_name not in self.opts.fields:
                 continue
@@ -984,13 +993,25 @@ class ModelSerializer(Serializer):
         meta = self.opts.model._meta
 
         # Reverse fk or one-to-one relations
-        for (obj, model) in meta.get_all_related_objects_with_model():
+        related_objects_with_model = [
+            (f, f.model if f.model != self.opts.model else None)
+            for f in self.opts.model._meta.get_fields()
+            if (f.one_to_many or f.one_to_one)
+            and f.auto_created and not f.concrete
+        ]
+
+        for (obj, model) in related_objects_with_model:
             field_name = obj.get_accessor_name()
             if field_name in attrs:
                 related_data[field_name] = attrs.pop(field_name)
 
         # Reverse m2m relations
-        for (obj, model) in meta.get_all_related_m2m_objects_with_model():
+        related_m2m_objects_with_model = [
+            (f, f.model if f.model != self.opts.model else None)
+            for f in self.opts.model._meta.get_fields(include_hidden=True)
+            if f.many_to_many and f.auto_created
+        ]
+        for (obj, model) in related_m2m_objects_with_model:
             field_name = obj.get_accessor_name()
             if field_name in attrs:
                 m2m_data[field_name] = attrs.pop(field_name)
@@ -1063,7 +1084,12 @@ class ModelSerializer(Serializer):
             related_fields = dict([
                 (field.get_accessor_name(), field)
                 for field, model
-                in obj._meta.get_all_related_objects_with_model()
+                in [
+                    (f, f.model if f.model != obj else None)
+                    for f in obj._meta.get_fields()
+                    if (f.one_to_many or f.one_to_one)
+                    and f.auto_created and not f.concrete
+                ]
             ])
             for accessor_name, related in obj._related_data.items():
                 if isinstance(related, RelationsList):
